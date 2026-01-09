@@ -13,6 +13,8 @@ Python library for controlling Thorlabs BBD202/BBD203 motion controllers via FTD
 - Context manager support for automatic cleanup
 
 ## Requirements
+The FTDI D2XX driver is required for this code to work correctly. You will need to disable linux's
+ftdi_sio module in order to use it. I am not sure why, and I have no intent of diagnosing it.
 
 ```bash
 pip install pyftdi
