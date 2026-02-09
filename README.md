@@ -168,6 +168,64 @@ stage.start_polling(interval=0.1)  # poll every 100 ms
 stage.stop_polling()
 ```
 
+### Trigger Modes
+
+The BBD20x supports configurable trigger I/O modes for both input and output. Trigger modes are set per-axis and can be combined.
+
+#### `set_trigger(axis, mode)` / `get_trigger(axis, timeout=5.0)`
+
+Set or query the trigger mode for an axis. Mode should be a `TriggerBitsServo` value from `apt_constants.py` or a combination of values using bitwise OR.
+
+```python
+from apt_constants import TriggerBitsServo
+
+# Set a single trigger mode
+stage.set_trigger(0x21, TriggerBitsServo.TRIGIN_HIGH)
+
+# Read back the current trigger mode
+mode = stage.get_trigger(0x21)
+print(f"Trigger mode: {mode}")
+
+# Combine modes with bitwise OR
+stage.set_trigger(0x21, TriggerBitsServo.TRIGIN_HIGH | TriggerBitsServo.TRIGOUT_INMOTION)
+```
+
+#### Trigger Input Modes (TRIGIN_*)
+
+| Mode | Value | Description |
+|---|---|---|
+| `TRIGIN_HIGH` | 0x01 | Trigger input detects logic high |
+| `TRIGIN_RELMOVE` | 0x02 | Trigger input initiates a relative move |
+| `TRIGIN_ABSMOVE` | 0x04 | Trigger input initiates an absolute move |
+| `TRIGIN_HOMEMOVE` | 0x08 | Trigger input initiates a home move |
+
+#### Trigger Output Modes (TRIGOUT_*)
+
+| Mode | Value | Description |
+|---|---|---|
+| `TRIGOUT_HIGH` | 0x10 | Trigger output goes high |
+| `TRIGOUT_INMOTION` | 0x20 | Trigger output high while axis is in motion |
+| `TRIGOUT_MOTIONCOMPLETE` | 0x40 | Trigger output pulses when motion completes |
+| `TRIGOUT_MAXVELOCITY` | 0x80 | Trigger output pulses at maximum velocity |
+| `TRIGOUT_MAXV` | 0x90 | Combined: high + pulse at max velocity (shorthand) |
+
+#### Convenience Methods
+
+For common trigger modes, use the dedicated setter methods:
+
+```python
+stage.set_trigger_trigin_high(0x21)              # TRIGIN_HIGH
+stage.set_trigger_trigin_relmove(0x21)           # TRIGIN_RELMOVE
+stage.set_trigger_trigin_absmove(0x21)           # TRIGIN_ABSMOVE
+stage.set_trigger_trigin_homemove(0x21)          # TRIGIN_HOMEMOVE
+
+stage.set_trigger_trigout_high(0x21)             # TRIGOUT_HIGH
+stage.set_trigger_trigout_inmotion(0x21)         # TRIGOUT_INMOTION
+stage.set_trigger_trigout_motioncomplete(0x21)   # TRIGOUT_MOTIONCOMPLETE
+stage.set_trigger_trigout_maxvelocity(0x21)      # TRIGOUT_MAXVELOCITY
+stage.set_trigger_trigout_maxv(0x21)             # TRIGOUT_MAXV (recommended default)
+```
+
 ### State Properties
 
 These are updated automatically by status poll responses and move-completed messages:

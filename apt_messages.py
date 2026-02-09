@@ -177,6 +177,27 @@ class APTProtocol():
             'fields': ['destination', 'source'],
             'data_fields': None
         },
+        0x0500: {
+            'name': 'MGMSG_MOT_SET_TRIGGER',
+            'format': 'BBBB',
+            'response': None,
+            'fields': ['chan_ident', 'mode', 'destination', 'source'],
+            'data_fields': None
+        },
+        0x0501: {
+            'name': 'MGMSG_MOT_REQ_TRIGGER',
+            'format': 'BBBB',
+            'response': 0x0502,
+            'fields': ['chan_ident', 'mode', 'destination', 'source'],
+            'data_fields': None
+        },
+        0x0502: {
+            'name': 'MGMSG_MOT_GET_TRIGGER',
+            'format': 'BBBB',
+            'response': None,
+            'fields': ['chan_ident', 'mode', 'destination', 'source'],
+            'data_fields': None
+        }
 
     }
 

@@ -7,7 +7,7 @@
 import time
 from threading import Thread, Event
 from queue import Queue, Empty
-from apt_constants import StatusBits
+from apt_constants import StatusBits, TriggerBitsServo
 from apt_messages import APTProtocol
 from serial_comms import SerialSnooper
 
@@ -447,3 +447,59 @@ class ThorlabsServoDriver():
                           acceleration=_accel,
                           max_velocity=_max_v,
                           destination=axis, source=0x01)
+
+    # ── Trigger control ───────────────────────────────────────
+
+    def set_trigger(self, axis, mode):
+        '''
+            set_trigger(axis, mode): Sets the trigger mode for the specified
+            axis. Mode should be a TriggerBitsServo value or combination.
+        '''
+        self.send_message(0x0500, chan_ident=1, mode=int(mode),
+                          destination=axis, source=0x01)
+
+    def get_trigger(self, axis, timeout=5.0):
+        '''
+            get_trigger(axis): Queries the current trigger mode for the
+            specified axis. Returns the mode byte as a TriggerBitsServo.
+        '''
+        result = self.send_and_wait(0x0501, timeout=timeout,
+                                    chan_ident=1, mode=0x00,
+                                    destination=axis, source=0x01)
+        return TriggerBitsServo(result['mode'])
+
+    def set_trigger_trigin_high(self, axis):
+        '''Set trigger input to logic high.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGIN_HIGH)
+
+    def set_trigger_trigin_relmove(self, axis):
+        '''Set trigger input to initiate a relative move.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGIN_RELMOVE)
+
+    def set_trigger_trigin_absmove(self, axis):
+        '''Set trigger input to initiate an absolute move.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGIN_ABSMOVE)
+
+    def set_trigger_trigin_homemove(self, axis):
+        '''Set trigger input to initiate a home move.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGIN_HOMEMOVE)
+
+    def set_trigger_trigout_high(self, axis):
+        '''Set trigger output to logic high.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGOUT_HIGH)
+
+    def set_trigger_trigout_inmotion(self, axis):
+        '''Set trigger output high while axis is in motion.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGOUT_INMOTION)
+
+    def set_trigger_trigout_motioncomplete(self, axis):
+        '''Set trigger output to pulse when motion completes.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGOUT_MOTIONCOMPLETE)
+
+    def set_trigger_trigout_maxvelocity(self, axis):
+        '''Set trigger output to pulse at max velocity.'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGOUT_MAXVELOCITY)
+
+    def set_trigger_trigout_maxv(self, axis):
+        '''Set trigger output high + pulse at max velocity (TRIGOUT_MAXV).'''
+        self.set_trigger(axis, TriggerBitsServo.TRIGOUT_MAXV)
