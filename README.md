@@ -1,668 +1,239 @@
-# BBD202/203 Motion Controller Library
+# pybbd202 — Thorlabs BBD20x Stage Driver
 
-Python library for controlling Thorlabs BBD202/BBD203 motion controllers via FTDI interface using the APT protocol.
+Python library for controlling Thorlabs BBD202/BBD203 brushless DC servo controllers with the MLS203-1 XY stage via the APT protocol over USB serial.
 
-## Features
-
-- Full control of X and Y axes
-- Absolute and relative positioning
-- Configurable velocity and acceleration
-- Automatic position tracking
-- Status monitoring with convenient properties
-- Thread-safe operation
-- Context manager support for automatic cleanup
+**Author:** Thomas Ales | Feb 2026
 
 ## Requirements
-The FTDI D2XX driver is required for this code to work correctly. You will need to disable linux's
-ftdi_sio module in order to use it. I am not sure why, and I have no intent of diagnosing it.
+
+- Python 3
+- [pyserial](https://pypi.org/project/pyserial/)
 
 ```bash
-pip install pyftdi
+pip install pyserial
 ```
+
+The controller connects as a USB serial device (default `/dev/ttyUSB1` at 115200 baud with RTS/CTS flow control).
+
+## Project Structure
+
+| File | Description |
+|---|---|
+| `bbd20x.py` | `ThorlabsServoDriver` — main driver class for axis control, homing, moves, and status polling |
+| `apt_messages.py` | `APTProtocol` — APT message registry, build/unpack logic for the Thorlabs binary protocol |
+| `apt_constants.py` | `StatusBits` — IntFlag enum for decoding motor status bit fields |
+| `serial_comms.py` | `SerialSnooper` — threaded serial listener that frames raw bytes into complete APT messages |
 
 ## Quick Start
 
 ```python
-from bbd203_controller import MotionController
-
-# Connect using context manager (automatic cleanup)
-with MotionController() as mc:
-    # Print hardware information
-    print(f"Model: {mc.get_model()}")
-    print(f"Serial: {mc.get_serial_number()}")
-    print(f"Firmware: {mc.get_firmware_version()}")
-
-    # Enable and home X-axis
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    mc.home_x_axis(timeout=20.0)
-
-    # Move to absolute position
-    mc.set_velocity_params(mc.DEST_X_AXIS,
-                          min_velocity=0.0,
-                          acceleration=100.0,
-                          max_velocity=50.0)
-    mc.set_move_abs_params(mc.DEST_X_AXIS, absolute_position=25.0)
-    result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-    print(f"Final position: {result['position']:.3f} mm")
-```
-
-## Connection Management
-
-### Basic Connection
-
-```python
-from bbd203_controller import MotionController
-
-# Manual connection
-mc = MotionController()
-mc.connect()
-
-# Use the controller...
-
-mc.disconnect()
-```
-
-### Using Context Manager (Recommended)
-
-```python
-# Automatic connection and cleanup
-with MotionController() as mc:
-    # Use the controller...
-    pass  # Automatically disconnects when exiting context
-```
-
-### Custom FTDI URL
-
-```python
-mc = MotionController(url='ftdi://0x0403:0xfaf0/1', baudrate=115200)
-```
-
-## Axis Control
-
-### Enabling Axes
-
-```python
-# Enable X-axis
-mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-
-# Enable Y-axis
-mc.set_channel_enable_state(mc.DEST_Y_AXIS, enabled=True)
-
-# Check if enabled
-is_enabled = mc.get_channel_enable_state(mc.DEST_X_AXIS)
-```
-
-### Homing
-
-```python
-# Home X-axis (blocks until complete)
-if mc.home_x_axis(timeout=20.0):
-    print(f"X-axis homed at position: {mc.position_x} mm")
-else:
-    print("Homing timed out")
-
-# Home Y-axis
-mc.home_y_axis(timeout=20.0)
-```
-
-After homing, the position automatically resets to 0 mm.
-
-## Motion Control
-
-### Setting Velocity Parameters
-
-```python
-# Set velocity parameters for X-axis
-mc.set_velocity_params(
-    mc.DEST_X_AXIS,
-    min_velocity=0.0,      # mm/s
-    acceleration=100.0,    # mm/s²
-    max_velocity=50.0      # mm/s
-)
-
-# Get current velocity parameters
-params = mc.get_velocity_params(mc.DEST_X_AXIS)
-print(f"Max velocity: {params['max_velocity']:.2f} mm/s")
-print(f"Acceleration: {params['acceleration']:.2f} mm/s²")
-```
-
-### Setting Acceleration Only
-
-```python
-# Change just the acceleration, preserving velocity settings
-mc.set_acceleration(mc.DEST_X_AXIS, 75.0)
-
-# Get just the acceleration value
-accel = mc.get_acceleration(mc.DEST_X_AXIS)
-```
-
-### Absolute Moves
-
-```python
-# Move to absolute position
-mc.set_move_abs_params(mc.DEST_X_AXIS, absolute_position=30.0)
-result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-if result:
-    print(f"Moved to: {result['position']:.3f} mm")
-    print(f"Status: 0x{result['status_bits']:08X}")
-```
-
-### Relative Moves
-
-```python
-# Move relative to current position
-mc.set_move_rel_params(mc.DEST_X_AXIS, relative_distance=5.0)
-result = mc.move_relative(mc.DEST_X_AXIS, timeout=30.0)
-
-# Move backwards
-mc.set_move_rel_params(mc.DEST_X_AXIS, relative_distance=-2.5)
-mc.move_relative(mc.DEST_X_AXIS, timeout=30.0)
-```
-
-### Stopping Motion
-
-```python
-# Controlled stop (gradual deceleration)
-mc.stop_x_axis(stop_mode=mc.StopMode.CONTROLLED, wait_for_stopped=True)
-
-# Immediate stop
-mc.stop_x_axis(stop_mode=mc.StopMode.IMMEDIATE, wait_for_stopped=True)
-
-# Stop both axes simultaneously
-results = mc.stop_all_axes(stop_mode=mc.StopMode.CONTROLLED)
-```
-
-## Position Tracking
-
-### Reading Current Position
-
-```python
-# Query position from controller (blocking)
-position = mc.get_position(mc.DEST_X_AXIS, timeout=5.0)
-print(f"X position: {position:.3f} mm")
-
-# Access cached position (non-blocking)
-x_pos = mc.position_x
-y_pos = mc.position_y
-
-# Get encoder counts (raw values)
-x_counts = mc.encoder_count_x
-```
-
-## Status Monitoring
-
-### Using Status Properties
-
-```python
-# Check various status flags
-print(f"X-axis enabled: {mc.is_enabled_x}")
-print(f"X-axis homed: {mc.is_homed_x}")
-print(f"X-axis in motion: {mc.is_in_motion_x}")
-print(f"X-axis settled: {mc.is_settled_x}")
-print(f"X-axis has errors: {mc.has_errors_x}")
-print(f"Power OK: {mc.power_ok_x}")
-```
-
-### Decoding Status Bits
-
-```python
-result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-if result:
-    status_bits = result['status_bits']
-
-    # Get human-readable description
-    description = MotionController.get_status_description(status_bits)
-    print(description)
-
-    # Check for errors
-    if MotionController.has_errors(status_bits):
-        print("ERROR: Motion completed with errors!")
-
-    # Check motion state
-    if MotionController.is_settled(status_bits):
-        print("Stage is settled at target position")
-```
-
-### Available Status Checks
-
-- `is_enabled_x` / `is_enabled_y` - Motor output enabled
-- `is_homed_x` / `is_homed_y` - Axis has been homed
-- `is_homing_x` / `is_homing_y` - Currently homing
-- `is_in_motion_x` / `is_in_motion_y` - Currently moving
-- `is_settled_x` / `is_settled_y` - Settled at target
-- `is_tracking_x` / `is_tracking_y` - Within tracking window
-- `is_connected_x` / `is_connected_y` - Motor recognized
-- `has_errors_x` / `has_errors_y` - Any error condition
-- `power_ok_x` / `power_ok_y` - Power supply OK
-- `is_active_x` / `is_active_y` - Executing motion command
-- `at_cw_limit_x` / `at_cw_limit_y` - At clockwise limit
-- `at_ccw_limit_x` / `at_ccw_limit_y` - At counter-clockwise limit
-
-## Multi-Axis Operations
-
-### Simultaneous Moves (Using Threading)
-
-```python
-import threading
-
-def move_x():
-    mc.set_move_abs_params(mc.DEST_X_AXIS, 50.0)
-    mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-def move_y():
-    mc.set_move_abs_params(mc.DEST_Y_AXIS, 30.0)
-    mc.move_absolute(mc.DEST_Y_AXIS, timeout=30.0)
-
-# Start both moves in parallel
-x_thread = threading.Thread(target=move_x)
-y_thread = threading.Thread(target=move_y)
-
-x_thread.start()
-y_thread.start()
-
-# Wait for both to complete
-x_thread.join()
-y_thread.join()
-
-print(f"Final position: ({mc.position_x:.2f}, {mc.position_y:.2f}) mm")
-```
-
-## Hardware Information
-
-```python
-with MotionController() as mc:
-    # Individual fields
-    print(f"Serial Number: {mc.get_serial_number()}")
-    print(f"Model: {mc.get_model()}")
-    print(f"Firmware: {mc.get_firmware_version()}")
-    print(f"Hardware Version: {mc.get_hw_version()}")
-    print(f"Number of Channels: {mc.get_num_channels()}")
-
-    # All info at once
-    info = mc.get_hw_info()
-    for key, value in info.items():
-        print(f"{key}: {value}")
-```
-
-## Complete Examples
-
-### Example 1: Simple Linear Move
-
-```python
-from bbd203_controller import MotionController
+from bbd20x import ThorlabsServoDriver
 import time
 
-with MotionController() as mc:
-    # Enable and home X-axis
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    time.sleep(0.5)
+stage = ThorlabsServoDriver()
+stage.connect()  # opens /dev/ttyUSB1, detects bays, starts worker threads
 
-    print("Homing X-axis...")
-    mc.home_x_axis(timeout=20.0)
-    print(f"Homed at {mc.position_x} mm")
+# Enable both axes
+stage.enable_axis(0x21)  # X
+stage.enable_axis(0x22)  # Y
+time.sleep(0.5)
 
-    # Set velocity for smooth motion
-    mc.set_velocity_params(mc.DEST_X_AXIS, 0.0, 50.0, 25.0)
+# Start status polling (keeps the controller watchdog alive)
+stage.start_polling()
 
-    # Move to 40mm
-    print("Moving to 40mm...")
-    mc.set_move_abs_params(mc.DEST_X_AXIS, 40.0)
-    result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
+# Home both axes (required after power-up)
+stage.home_axis(0x21, timeout=60.0)
+stage.home_axis(0x22, timeout=60.0)
 
-    if result and not mc.has_errors_x:
-        print(f"Successfully moved to {result['position']:.3f} mm")
-    else:
-        print("Move failed or has errors")
+# Move X axis to 50 mm absolute
+stage.move_axis_absolute(0x21, 50.0)
+
+# Move Y axis 10 mm relative to current position
+stage.move_axis_relative(0x22, 10.0)
+
+# Read current positions
+print(f"X: {stage.positions[0]:.3f} mm")
+print(f"Y: {stage.positions[1]:.3f} mm")
+
+# Clean up
+stage.stop_polling()
+stage.disconnect()
 ```
 
-### Example 2: Square Pattern with Two Axes
+## Axis Addresses
+
+| Address | Axis |
+|---|---|
+| `0x21` | X axis (bay 0) |
+| `0x22` | Y axis (bay 1) |
+
+State arrays (`positions`, `am_homed`, `am_moving`, etc.) use index 0 for X and index 1 for Y.
+
+## API Reference
+
+### Connection
+
+#### `connect(port=None, spd=None)`
+
+Opens the serial port, starts TX/RX/polling worker threads, and probes which bays are present. Defaults to `/dev/ttyUSB1` at 115200 baud.
 
 ```python
-from bbd203_controller import MotionController
-import threading
-import time
-
-def move_to_position(mc, x, y, label):
-    """Move to (x, y) with both axes moving simultaneously."""
-    print(f"Moving to {label}: ({x}, {y}) mm")
-
-    # Set parameters for both axes
-    mc.set_move_abs_params(mc.DEST_X_AXIS, x)
-    mc.set_move_abs_params(mc.DEST_Y_AXIS, y)
-    time.sleep(0.1)
-
-    # Execute moves in parallel
-    results = [None, None]
-
-    def move_x():
-        results[0] = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-    def move_y():
-        results[1] = mc.move_absolute(mc.DEST_Y_AXIS, timeout=30.0)
-
-    x_thread = threading.Thread(target=move_x)
-    y_thread = threading.Thread(target=move_y)
-
-    x_thread.start()
-    y_thread.start()
-    x_thread.join()
-    y_thread.join()
-
-    if results[0] and results[1]:
-        print(f"  Reached ({results[0]['position']:.2f}, {results[1]['position']:.2f}) mm")
-        return True
-    return False
-
-with MotionController() as mc:
-    # Enable both axes
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    mc.set_channel_enable_state(mc.DEST_Y_AXIS, enabled=True)
-    time.sleep(0.5)
-
-    # Home both axes
-    print("Homing axes...")
-    mc.home_x_axis(timeout=20.0)
-    mc.home_y_axis(timeout=20.0)
-
-    # Set velocity for both axes
-    velocity = 50.0
-    acceleration = 100.0
-    mc.set_velocity_params(mc.DEST_X_AXIS, 0.0, acceleration, velocity)
-    mc.set_velocity_params(mc.DEST_Y_AXIS, 0.0, acceleration, velocity)
-
-    # Define 20mm square centered at (55, 37.5)
-    center_x, center_y = 55.0, 37.5
-    half_size = 10.0
-
-    waypoints = [
-        (center_x - half_size, center_y - half_size, "Bottom Left"),
-        (center_x + half_size, center_y - half_size, "Bottom Right"),
-        (center_x + half_size, center_y + half_size, "Top Right"),
-        (center_x - half_size, center_y + half_size, "Top Left"),
-        (center_x, center_y, "Center"),
-    ]
-
-    # Execute square pattern
-    for x, y, label in waypoints:
-        if not move_to_position(mc, x, y, label):
-            print(f"Failed at {label}")
-            break
-        time.sleep(0.5)
-
-    print("Square pattern complete!")
+stage = ThorlabsServoDriver()
+stage.connect()                          # use defaults
+stage.connect(port="/dev/ttyUSB0")       # custom port
+stage.connect(port="/dev/ttyUSB0", spd=115200)
 ```
 
-### Example 3: Velocity Ramping Test
+#### `disconnect()`
+
+Sends disconnect messages to the controller and all bays, stops worker threads, and closes the serial port.
+
+### Axis Control
+
+#### `enable_axis(axis)` / `disable_axis(axis)`
+
+Enable or disable the motor driver for the given axis.
 
 ```python
-from bbd203_controller import MotionController
-import time
-
-with MotionController() as mc:
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    time.sleep(0.5)
-    mc.home_x_axis(timeout=20.0)
-
-    # Test at different velocities
-    test_velocities = [10.0, 25.0, 50.0, 100.0]
-    move_distance = 20.0
-
-    for velocity in test_velocities:
-        print(f"\n--- Testing at {velocity} mm/s ---")
-
-        # Set velocity parameters
-        mc.set_velocity_params(mc.DEST_X_AXIS, 0.0, 100.0, velocity)
-
-        # Move forward
-        mc.set_move_abs_params(mc.DEST_X_AXIS, move_distance)
-        start_time = time.time()
-        result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-        elapsed = time.time() - start_time
-
-        if result:
-            print(f"  Moved {move_distance}mm in {elapsed:.2f}s")
-            print(f"  Average speed: {move_distance/elapsed:.2f} mm/s")
-
-        time.sleep(0.5)
-
-        # Move back to start
-        mc.set_move_abs_params(mc.DEST_X_AXIS, 0.0)
-        mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-        time.sleep(0.5)
+stage.enable_axis(0x21)   # enable X
+stage.disable_axis(0x22)  # disable Y
 ```
 
-### Example 4: Position Monitoring During Move
+#### `toggle_enabled_state(axis)`
+
+Toggles the enabled state of the specified axis based on the cached state.
+
+#### `home_axis(axis, timeout=60.0)`
+
+Blocking homing command. Sends the home request and waits for the homed response. Required after power-up before any moves can be made.
 
 ```python
-from bbd203_controller import MotionController
-import threading
-import time
-
-with MotionController() as mc:
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    time.sleep(0.5)
-    mc.home_x_axis(timeout=20.0)
-
-    # Set slow velocity for visible monitoring
-    mc.set_velocity_params(mc.DEST_X_AXIS, 0.0, 50.0, 10.0)
-
-    # Start move in background thread
-    move_complete = threading.Event()
-
-    def do_move():
-        mc.set_move_abs_params(mc.DEST_X_AXIS, 50.0)
-        mc.move_absolute(mc.DEST_X_AXIS, timeout=60.0)
-        move_complete.set()
-
-    move_thread = threading.Thread(target=do_move)
-    move_thread.start()
-
-    # Monitor position while moving
-    print("Position monitoring:")
-    while not move_complete.is_set():
-        # Request current position
-        pos = mc.get_position(mc.DEST_X_AXIS, timeout=1.0)
-        if pos is not None:
-            print(f"  Current position: {pos:.3f} mm, "
-                  f"In motion: {mc.is_in_motion_x}, "
-                  f"Settled: {mc.is_settled_x}")
-        time.sleep(0.5)
-
-    move_thread.join()
-    print(f"Move complete! Final position: {mc.position_x:.3f} mm")
+stage.home_axis(0x21, timeout=30.0)
 ```
 
-## Constants and Enumerations
+### Motion
 
-### Axis Destinations
+#### `move_axis_absolute(axis, position_in_mm, timeout=10.0)`
+
+Moves the axis to an absolute position in mm. Blocks until the move completes or the timeout expires.
+
+- X axis range: 0 — 110 mm
+- Y axis range: 0 — 75 mm
 
 ```python
-mc.DEST_CONTROLLER  # 0x11 - Controller/motherboard
-mc.DEST_X_AXIS      # 0x21 - X-axis
-mc.DEST_Y_AXIS      # 0x22 - Y-axis
+stage.move_axis_absolute(0x21, 55.0)   # move X to 55 mm
+stage.move_axis_absolute(0x22, 37.5)   # move Y to 37.5 mm
 ```
 
-### Stop Modes
+#### `move_axis_relative(axis, distance_in_mm, timeout=10.0)`
+
+Moves the axis by a relative distance in mm from its current position. Blocks until complete.
 
 ```python
-from bbd203_controller import StopMode
-
-StopMode.IMMEDIATE   # 1 - Instant stop
-StopMode.CONTROLLED  # 2 - Controlled deceleration (default)
+stage.move_axis_relative(0x21, 5.0)    # move X forward 5 mm
+stage.move_axis_relative(0x22, -2.5)   # move Y backward 2.5 mm
 ```
 
-### Jog Modes
+### Velocity Parameters
+
+#### `get_velocity_params(axis, timeout=5.0)`
+
+Queries the controller for current velocity parameters. Returns a dict:
 
 ```python
-from bbd203_controller import JogMode
-
-JogMode.CONTINUOUS   # 1 - Continuous jogging
-JogMode.SINGLE_STEP  # 2 - Single step jogging
+params = stage.get_velocity_params(0x21)
+# {'min_velocity': 0.0, 'acceleration': 500.0, 'max_velocity': 100.0}
 ```
 
-### Channel Enable States
+Values are in mm/s and mm/s².
+
+#### `set_velocity_params(axis, max_velocity=None, acceleration=None)`
+
+Sets velocity and/or acceleration for the specified axis. Any parameter left as `None` keeps its current value.
 
 ```python
-from bbd203_controller import ChannelEnableState
-
-ChannelEnableState.DISABLED  # 0x02
-ChannelEnableState.ENABLED   # 0x01
+stage.set_velocity_params(0x21, max_velocity=50.0, acceleration=200.0)
+stage.set_velocity_params(0x22, max_velocity=25.0)  # keep current accel
 ```
 
-## Scaling Factors
+### Status Polling
 
-The library handles all unit conversions automatically:
+#### `start_polling(interval=0.2)` / `stop_polling()`
 
-- **Position**: 20,000 encoder counts per mm
-- **Velocity**: 13,421.77 counts per mm/s
-- **Acceleration**: 13.744 counts per mm/s²
-
-## Error Handling
+Starts or stops periodic `REQ_USTATUSUPDATE` requests to each bay. The RX worker automatically ACKs these responses, which keeps the controller's communications watchdog alive. Polling also continuously updates the cached state properties.
 
 ```python
-from bbd203_controller import MotionController
-
-try:
-    with MotionController() as mc:
-        # Invalid axis destination
-        mc.set_channel_enable_state(0x99, enabled=True)
-except ValueError as e:
-    print(f"ValueError: {e}")
-
-try:
-    with MotionController() as mc:
-        mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-        mc.home_x_axis(timeout=5.0)  # Too short timeout
-
-        if not mc.is_homed_x:
-            print("Homing failed - axis not homed")
-except Exception as e:
-    print(f"Error: {e}")
+stage.start_polling(interval=0.1)  # poll every 100 ms
+# ... do work ...
+stage.stop_polling()
 ```
 
-## Advanced Features
+### State Properties
 
-### Message Callbacks
+These are updated automatically by status poll responses and move-completed messages:
+
+| Property | Type | Description |
+|---|---|---|
+| `positions[ch]` | float | Current position in mm |
+| `act_velocities[ch]` | float | Current velocity in mm/s |
+| `current_demand[ch]` | int | Motor current demand (raw) |
+| `am_homed[ch]` | bool | Axis has been homed |
+| `am_moving[ch]` | bool | Axis is currently in motion |
+| `am_error[ch]` | bool | Axis has an error condition |
+| `am_enabled[ch]` | bool | Axis motor driver is enabled |
+| `am_connected` | bool | Serial connection is active |
+| `bays_present` | list | Bay addresses detected at connect |
+
+Where `ch` is 0 for X, 1 for Y.
+
+### Low-Level Messaging
+
+#### `send_and_wait(msg_id, timeout=10.0, retries=1, **kwargs)`
+
+Sends an APT message and blocks until the expected response arrives. On timeout, drains the serial buffer and retries. Raises `TimeoutError` if all attempts fail.
 
 ```python
-from bbd203_controller import MotionController, AptMessage, MsgId
-
-def on_move_stopped(msg: AptMessage):
-    print(f"Axis stopped unexpectedly!")
-    print(f"Source: 0x{msg.source:02X}")
-
-with MotionController() as mc:
-    # Register callback for stop events
-    mc.register_callback(MsgId.MOT_MOVE_STOPPED, on_move_stopped)
-
-    # Your motion code here...
-
-    # Unregister when done
-    mc.unregister_callback(MsgId.MOT_MOVE_STOPPED, on_move_stopped)
+info = stage.send_and_wait(0x0005, destination=0x11, source=0x01)
 ```
 
-### Direct Message Access
+#### `send_message(msg_id, **kwargs)`
 
-```python
-# Wait for a specific message type
-msg = mc.wait_for_message(MsgId.MOT_MOVE_COMPLETED, timeout=30.0)
+Fire-and-forget: builds and queues an APT message for transmission.
 
-# Get next message from queue
-msg = mc.get_message(timeout=0.1)
+## Architecture
 
-# Get all queued messages
-messages = mc.get_all_messages()
-```
+The driver uses three daemon threads:
 
-### Manual Connection Control
+1. **TX worker** — serializes all outbound writes through a queue to prevent write races on the serial port.
+2. **RX worker** — reads parsed messages from `SerialSnooper`, dispatches responses to waiting callers, ACKs status updates, and updates cached state.
+3. **Poll worker** — periodically sends status requests to each bay to keep the controller watchdog alive and state up to date.
 
-```python
-mc = MotionController()
+`SerialSnooper` (from `serial_comms.py`) runs in its own thread and handles raw serial I/O, framing variable-length APT messages from the byte stream and placing complete packets on `rx_msg_queue`.
 
-# Connect with updates disabled
-mc.connect(enable_updates=False)
+## Scaling Factors (MLS203-1)
 
-# Manually start/stop status updates
-mc.start_update_messages()
-# ...
-mc.stop_update_messages()
+| Parameter | Factor |
+|---|---|
+| Position | 20,000 encoder counts per mm |
+| Velocity | 134,217.73 counts per mm/s |
+| Acceleration | 13.744 counts per mm/s² |
 
-mc.disconnect()
-```
-
-## Tips for Linear Scans
-
-For performing linear scans at controlled speeds:
-
-1. **Set velocity parameters** before each scan to ensure consistent motion
-2. **Use absolute moves** with pre-calculated waypoints for accuracy
-3. **For continuous scanning**: Execute moves sequentially without waiting
-4. **For synchronized 2-axis moves**: Use threading (see examples above)
-5. **Monitor position** during moves if needed for data acquisition timing
-
-### Simple 1D Linear Scan
-
-```python
-with MotionController() as mc:
-    mc.set_channel_enable_state(mc.DEST_X_AXIS, enabled=True)
-    mc.home_x_axis(timeout=20.0)
-
-    # Scan parameters
-    start_pos = 10.0  # mm
-    end_pos = 90.0    # mm
-    step_size = 2.0   # mm
-    scan_speed = 20.0 # mm/s
-
-    # Set velocity for consistent speed
-    mc.set_velocity_params(mc.DEST_X_AXIS, 0.0, 100.0, scan_speed)
-
-    # Execute scan
-    position = start_pos
-    while position <= end_pos:
-        mc.set_move_abs_params(mc.DEST_X_AXIS, position)
-        result = mc.move_absolute(mc.DEST_X_AXIS, timeout=30.0)
-
-        if result:
-            # Acquire data at this position
-            print(f"Scan point at {result['position']:.3f} mm")
-            # Your data acquisition code here...
-
-        position += step_size
-```
+These are defined in `ThorlabsServoDriver` and applied automatically by all move and velocity methods.
 
 ## Troubleshooting
 
-### Controller Not Responding
+**No bays detected on connect** — Verify the USB cable is connected and the controller is powered on. Check that the correct serial port is being used (`/dev/ttyUSB1` by default). On Linux, you may need to add your user to the `dialout` group.
 
-If the controller stops responding after many commands:
-- The library automatically sends ACK messages every second
-- This is handled internally and should not require user intervention
+**Moves timing out** — Ensure the axis is enabled and homed before issuing move commands. Increase the `timeout` parameter if the move distance is large or velocity is low.
 
-### Moves Timing Out
+**Controller stops responding** — Make sure `start_polling()` has been called. The controller has a communications watchdog that requires periodic messages to stay alive.
 
-- Increase the `timeout` parameter on move commands
-- Check that velocity and acceleration are set appropriately
-- Ensure the axis is enabled and homed
-
-### Position Inaccurate After Homing
-
-- Position automatically resets to 0 mm after homing completes
-- Always wait for homing to complete before issuing move commands
-- Check `is_homed_x` / `is_homed_y` properties to verify
-
-### Unexpected Stops
-
-- Register a callback for `MsgId.MOT_MOVE_STOPPED` to detect stop events
-- Check error flags in status bits
-- Ensure no limit switches are being triggered
+**Permission denied on serial port** — Run `sudo usermod -aG dialout $USER` and log out/in, or use `sudo`.
 
 ## License
 
-MIT License
+MIT License — see [LICENSE](LICENSE).
 
-## Author
+---
 
-Generated for BBD202/BBD203 motion controller control via APT protocol.
+*Documentation generated by Claude.*
